@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pygrm"
+version = "0.1.0"
+description = "Global Relational Model: a log-space relational solver that finds the values, tensions and invariants of a network of relations."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Anthony Charretier" }]
+keywords = ["relational model", "least squares", "invariants", "constraint network", "physics", "dimensional analysis"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = []
+
+[project.optional-dependencies]
+fast = ["numpy>=1.21"]
+
+[project.urls]
+Homepage = "https://github.com/innermost47/pygrm"
+Showcase = "https://github.com/innermost47/grm-core"
+
+[tool.setuptools.packages.find]
+where = ["src"]
