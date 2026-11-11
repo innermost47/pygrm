@@ -916,6 +916,13 @@ class GlobalRelationalNetwork:
             return f"{latex_body} = {right}"
         return f"$${latex_body} = {right}$$"
 
+    def derive(self, equation, keep=(), max_steps=16):
+        """The demonstration of `equation` ('S * Equant = Estock') from this network's product relations, step by
+        step (pygrm.derive): d.found, d.exact, d.steps, d.text(lang="fr" | "en", fmt="markdown" | "latex",
+        templates={...})."""
+        from .derive import derive as _derive
+        return _derive(self, equation, keep=keep, max_steps=max_steps)
+
     def global_equations(self, keep, tol=1e-9):
         """
         Equations the network holds between the nodes in `keep` only, with every other node eliminated.

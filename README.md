@@ -113,6 +113,45 @@ than one tick). A pure number such as S is the same in every system. The uncerta
 apart (`unit_sigma_dex`) and added to the solve's own: in Planck units, G's 2.2e-5 reaches every mass and energy.
 `pygrm.units` also has `to_mode`, `from_mode`, `unit_log10`, `unit_sigma_dex` and `tick_power` for single values.
 
+## Demonstrations (`derive`)
+
+From an equation to its demonstration, through the network's own relations (new in 0.4.0):
+
+```python
+d = net.derive("S * Equant = Estock")
+d.found, d.exact, d.holds      # a chain was found; every power cancels; what is left is exactly 1
+d.steps                        # [Step(node, relation, weight, definition, expression), ...]
+print(d.text(lang="fr"))       # a written demonstration (Markdown)
+print(d.text(fmt="latex"))
+```
+
+A product relation is a straight line in log10. Starting from the left side over the right side, the demonstration
+replaces one quantity at a time by its definition, taken from one relation of the network (the relation solved for
+that quantity), until only the network's fixed constants are left (and the quantities given in `keep=`). The powers
+are exact fractions, the numbers are recognised as a rational times a power of π: when everything cancels, the
+equation follows from the network's relations by substitution alone. The chain with the fewest steps is taken.
+
+```
+## Démonstration : S * Equant = Estock
+
+Le point de départ est le membre de gauche divisé par le membre de droite : `S · Equant / Estock`.
+
+1. `S` est remplacé par sa définition (entropy) : `S = π · c^2 / (Hend^2 · lP^2)`. ...
+...
+7. `rhoL` est remplacé par sa définition (vacuum) : `rhoL = 3 · c^2 · H0^2 · OmegaL / (8 · π · G)`. L'expression devient `1`.
+
+D'où `S · Equant = Estock`.
+```
+
+- An equation that does not hold as written is said so, with the factor it is off by and the equation the network
+  gives instead (`Tfloor · kB = hbar · Hend` → `Tfloor · kB = hbar · Hend / (2 · π)`).
+- The sentences are the caller's: `templates={"title", "start", "step", "end", "conclusion", "exact", "differs",
+  "none"}` with placeholders the network fills (`{lhs}`, `{node}`, `{relation}`, `{definition}`, `{expression}`,
+  `{result}`, `{conclusion}`, `{ratio}`, `{n}`, `{count}`). French and English are given.
+- Only product relations with a constant right side are used (sums and functions are not straight in log). The
+  demonstration holds inside the network: it shows that the equation follows from its relations, not that they are
+  true (that is what the measurements are for).
+
 ## Finding relations (`discover`)
 
 What a network can find by itself in what it has seen (new in 0.3.0). Given rows of quantities seen together:

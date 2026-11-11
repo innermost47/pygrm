@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pygrm"
-version = "0.3.0"
+version = "0.4.0"
 description = "Global Relational Model: a log-space relational solver that finds the values, tensions and invariants of a network of relations."
 readme = "README.md"
 requires-python = ">=3.9"

@@ -11,6 +11,7 @@ from .grm import GlobalRelationalNetwork
 from . import units
 from .units import express, convert_network, MODES
 from . import discover
+from . import derive
 
-__all__ = ["GlobalRelationalNetwork", "units", "express", "convert_network", "MODES", "discover"]
-__version__ = "0.3.0"
+__all__ = ["GlobalRelationalNetwork", "units", "express", "convert_network", "MODES", "discover", "derive"]
+__version__ = "0.4.0"
