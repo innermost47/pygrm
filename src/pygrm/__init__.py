@@ -4,10 +4,13 @@
 
     from pygrm import GlobalRelationalNetwork
     GlobalRelationalNetwork(nodes, relations, units="planck")   # si | atomic | planck | ticks
+    discover.find_relations(rows)    # the relations a network can find by itself in what it has seen
+    discover.hidden_node(residuals)  # is a node missing?
 """
 from .grm import GlobalRelationalNetwork
 from . import units
 from .units import express, convert_network, MODES
+from . import discover
 
-__all__ = ["GlobalRelationalNetwork", "units", "express", "convert_network", "MODES"]
-__version__ = "0.2.0"
+__all__ = ["GlobalRelationalNetwork", "units", "express", "convert_network", "MODES", "discover"]
+__version__ = "0.3.0"

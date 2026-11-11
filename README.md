@@ -113,6 +113,46 @@ than one tick). A pure number such as S is the same in every system. The uncerta
 apart (`unit_sigma_dex`) and added to the solve's own: in Planck units, G's 2.2e-5 reaches every mass and energy.
 `pygrm.units` also has `to_mode`, `from_mode`, `unit_log10`, `unit_sigma_dex` and `tick_power` for single values.
 
+## Finding relations (`discover`)
+
+What a network can find by itself in what it has seen (new in 0.3.0). Given rows of quantities seen together:
+
+```python
+from pygrm import discover
+
+rows = [{"t": 1.0, "h": 4.9}, {"t": 2.0, "h": 19.6}, {"t": 3.0, "h": 44.1}, ...]
+discover.find_relations(rows)
+# [{"kind": "power", "target": "h", "terms": {"t": 2.0}, "constant": 4.9, "sigma": ..., "r2": ..., "text": "h = 4.9 * t^2"}]
+```
+
+`find_relations` keeps, for each quantity, the simplest relation that holds on the rows (r² at least 0.999 by
+default), in this order:
+
+| kind | form | |
+|---|---|---|
+| `power` | y = K x^p, y = K x^p z^q | positive quantities, simple powers (1, 2, 3, 1/2, 3/2, 1/3, 2/3 and their negatives); a power is made simple only if the simple one holds nearly as well as the free fit (x^1.8 is not turned into x^2) |
+| `linear` | y = a x + b | any quantities |
+| `exponential`, `log` | y = A e^(k x), y = a ln(x) + b | |
+| `sum` | y = a1 m1 + a2 m2 (+ a3 m3) + b | the m are products of the others (m v², m h): a sum built on products, found by forward selection, every term needed |
+
+Among the forms of the same quantities, the simplest is written with whole and positive powers when it can be
+(F = m a rather than a = F m^-1); the quantity that comes last in the rows is the one written from the others. The
+constants come with their uncertainty. `exclude=[{...}]`: groups of quantities a network already ties. Noise gives
+nothing.
+
+```python
+discover.find_dynamics(rows)       # rows in the order they were seen
+# x(t) = a x(t-1) + c               growth or decay: its factor, half-life or doubling time
+# x(t) = a x(t-1) + b x(t-2) + c    an oscillation: its period (in moments) and its damping
+discover.hidden_node(residuals)    # a constant missing: residuals on the same side far beyond chance
+discover.hidden_dynamics(residuals)  # a missing node that changes: residuals that follow each other (rho)
+```
+
+`hidden_node` and `hidden_dynamics` take the residuals of a relation, row after row, in its sigmas, and refuse to
+invent a node when nothing is missing.
+
+Pure Python, no NumPy needed. The GRM machine of grm-core (`vm/`) uses all of it, by itself, after every file it loads.
+
 ## Showcase
 
 What the GRM is used for, from cosmology to a physically modelled guitar:
