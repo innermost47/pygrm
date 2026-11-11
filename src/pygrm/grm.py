@@ -36,6 +36,11 @@ import math
 import random
 
 try:
+    from . import units as _units
+except ImportError:  # grm.py used on its own, next to units.py
+    import units as _units
+
+try:
     import numpy as _np
 except ImportError:  # pragma: no cover - pure Python fallback
     _np = None
@@ -117,18 +122,32 @@ class GlobalRelationalNetwork:
         relations_spec=None,
         prior_sigma=1e3,
         undetermined_sigma=1.0,
+        units="si",
     ):
         """
-        nodes_spec      {name: {"guess": value, "fixed": bool, "scale": "log" | "lin", "min": val, "max": val}}
+        nodes_spec      {name: {"guess": value, "fixed": bool, "scale": "log" | "lin", "min": val, "max": val,
+                                "dim": [M, L, T, Q, K]}}   (dim: powers of mass, length, time, charge, temperature)
         relations_spec  list of relations (see module docstring); each may have "name" and "sigma"
                         (default 1e-3), log-linear ones may have "depends" (nodes a callable rhs reads)
         prior_sigma     width of a very weak ridge that keeps the problem solvable when some direction
                         is not determined by anything (it does not bias determined nodes)
         undetermined_sigma  a free node whose uncertainty exceeds this (dex, or value units for a
                         signed node, relative to max(1, |value|)) is reported as undetermined
+        units           the system the network is SOLVED in: "si" (default), "atomic", "planck" or "ticks"
+                        (see pygrm.units). Specs and measurements are always given in SI; with another
+                        system they are converted (copies: the caller's dicts are left untouched) and the
+                        values returned by solve() are numbers in that system. result["si"] gives them back
+                        in SI. To only READ an SI result in another system, keep units="si" and call express().
         """
         nodes_spec = nodes_spec if nodes_spec is not None else {}
         relations_spec = relations_spec if relations_spec is not None else []
+        if units not in _units.MODES:
+            raise ValueError(f"units must be one of {', '.join(_units.MODES)}")
+        self.units = units
+        self._unit_net = None
+        if units != "si":
+            self._unit_net = _units.convert_network(nodes_spec, relations_spec, units)
+            nodes_spec, relations_spec = self._unit_net.nodes, self._unit_net.relations
         self.nodes_names = list(nodes_spec)
         self.node_to_idx = {name: i for i, name in enumerate(self.nodes_names)}
         self.nodes_specs: dict = nodes_spec
@@ -500,6 +519,9 @@ class GlobalRelationalNetwork:
                            with that relation loosened then tightened stage by stage, and keep the better end
         """
         measured_dict = dict(measured_dict or {})
+        if self._unit_net is not None:
+            measured_dict = self._unit_net.measured(measured_dict)
+            start = self._unit_net.from_si(start) if start else start
         for name, prior in getattr(self, "hidden_priors", {}).items():
             if name in self.node_to_idx and name not in measured_dict:
                 measured_dict[name] = prior
@@ -596,7 +618,10 @@ class GlobalRelationalNetwork:
             "converged": converged,
             "dof": dof,
             "reduced_chi2": cost / dof if dof > 0 else None,
+            "units": self.units,
         }
+        if self._unit_net is not None:
+            result["si"] = self._unit_net.to_si(result["values"])
         pulls = self._rows(x, [], {}, jacobian=False)[0]
         result["relation_pulls"] = {
             rel["name"]: r * w for rel, (_, r, w) in zip(self.relations, pulls)
@@ -801,6 +826,19 @@ class GlobalRelationalNetwork:
                 formatted_parts.append(f"{coef_str} \\cdot \\log_{10}({name})")
 
         return "f(x) = " + " ".join(formatted_parts)
+
+    def express(self, result, mode):
+        """The values of a solve() written in another system of units ("si", "atomic", "planck", "ticks").
+        Works whatever system the network was solved in. Each node gets value, sigma_dex (the solve's and the
+        units' own uncertainty together; for a signed node, the sigma in the new units) and unit_sigma_dex;
+        in mode "ticks" also power k and ticks_log10 (the value is N ticks to the power k).
+        Needs "dim" in the node specs (a node without it is a pure number and keeps its value)."""
+        values = result.get("si") or result["values"]
+        sig = dict(result.get("sigma_dex") or {})
+        for n in sig:
+            if self._unit_net is not None and self.lin[self.node_to_idx[n]]:
+                sig[n] = self._unit_net._back(n, sig[n])     # a signed node's sigma is in value units
+        return _units.express(values, self.nodes_specs, mode, sig)
 
     def leave_one_out(self, measured_dict, **solve_kwargs):
         default_sigma = solve_kwargs.get("measurement_sigma", 1e-4)
