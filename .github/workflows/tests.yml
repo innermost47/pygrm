@@ -1,0 +1,30 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.11", "3.13"]
+        extras: ["", "[fast]"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install ".${{ matrix.extras }}"
+      - name: Smoke test
+        run: |
+          python -c "
+          from pygrm import GlobalRelationalNetwork
+          net = GlobalRelationalNetwork({'a': {'guess': 2.0}, 'b': {'guess': 3.0}},
+                                        [{'name': 'r', 'terms': {'a': 1, 'b': -2}, 'rhs': 0}])
+          v = net.solve(measured_dict={'b': (10, 0.01)})['values']
+          assert abs(v['a'] - 100) < 1e-6, v
+          print('ok', v)
+          "
