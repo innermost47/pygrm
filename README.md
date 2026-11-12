@@ -8,7 +8,8 @@ at once and tells you:
 - the best value of every node, with its uncertainty, and the nodes nothing determines;
 - where the network is in tension (the pull of every relation and measurement);
 - the equations the network implies without writing them (`global_equations`), and which relations they come from;
-- the invariant that ties the most distant scales together (`extract_master_invariant`).
+- the invariant that ties the most distant scales together (`extract_master_invariant`), over pairs and triples of
+  nodes.
 
 Relations are written in log space, so values from 1e-53 to 1e122 live side by side. Products, ratios and powers are
 linear there (`log`), sums have their own type (`sum`), and any other equation can be given as a function (`fn`).
@@ -151,6 +152,25 @@ D'où `S · Equant = Estock`.
 - Only product relations with a constant right side are used (sums and functions are not straight in log). The
   demonstration holds inside the network: it shows that the equation follows from its relations, not that they are
   true (that is what the measurements are for).
+
+## The master invariant (`extract_master_invariant`)
+
+Of the relations given, and of the equations the network implies without writing them, the one that ties the widest
+span of scales with the smallest residual (merit = span in decades / (1 + 1e7 residual)). The implied equations are
+found by elimination (`global_equations`): for the pairs of nodes farthest apart in scale (`max_pairs`, 60), and for
+triples (`max_triples`, 200: the farthest pairs, each with every third node linked to them by relations that do not
+pass through a constant), every other node is eliminated, the constants kept and, for triples, also eliminated. An
+equation where every constant cancels has three nodes or more: S · Equant = Estock, from the seven relations of the
+chain, is found that way (with pairs only, the best is S · Equant² = ħc⁵/(4πG), which needs a second equation to give
+it).
+
+A residual below 1e-9 dex is rounding; an equation made of exact relations (sigma ≤ 1e-6 dex) whose residual is within
+two of its sigmas is exact. Such residuals count as equal, and the span decides, then the fewer terms.
+
+```python
+m = net.extract_master_invariant(values, display_mode="compact")            # pairs and triples
+m = net.extract_master_invariant(values, max_triples=0)                     # pairs only (as before 0.5.0)
+```
 
 ## Finding relations (`discover`)
 

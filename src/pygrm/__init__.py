@@ -14,4 +14,4 @@ from . import discover
 from . import derive
 
 __all__ = ["GlobalRelationalNetwork", "units", "express", "convert_network", "MODES", "discover", "derive"]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

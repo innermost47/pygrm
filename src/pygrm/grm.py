@@ -115,6 +115,19 @@ def _covariance_from_R(R):
 
 
 # ---------------------------------------------------------------------- network
+RESIDUAL_FLOOR = 1e-9   # dex: a residual below this is rounding (solved values, float log10), not a difference
+EXACT_SIGMA = 1e-6      # dex: an equation made of relations this precise is exact; within 2 of its sigmas, its
+                        # residual is the precision its values were solved to, not a difference
+
+
+def _merit(span, residual, sigma=None):
+    """Span of scales over residual: merit = span / (1 + 1e7 * r), r = max(residual, RESIDUAL_FLOOR), and
+    r = RESIDUAL_FLOOR when the equation is exact (sigma <= EXACT_SIGMA) and its residual within 2 sigma."""
+    if sigma is not None and sigma <= EXACT_SIGMA and residual <= 2.0 * sigma:
+        residual = 0.0
+    return span / (1.0 + 1e7 * max(residual, RESIDUAL_FLOOR))
+
+
 class GlobalRelationalNetwork:
     def __init__(
         self,
@@ -1111,11 +1124,11 @@ class GlobalRelationalNetwork:
         return report
 
     def extract_master_invariant(
-        self, resolved_vals: dict, display_mode="latex_block", unify=True, max_pairs=60
+        self, resolved_vals: dict, display_mode="latex_block", unify=True, max_pairs=60, max_triples=200
     ) -> dict:
         """
         The master invariant of the network: the equation that ties together the most distant scales with the
-        smallest residual on the solved values (merit = span of scales in decades / (1 + 1e7 * residual)).
+        smallest residual on the solved values (merit = span of scales in decades / (1 + 1e7 * max(residual, 1e-9))).
 
         Candidates:
           - the relations given (log and sum relations);
@@ -1123,6 +1136,10 @@ class GlobalRelationalNetwork:
             positive nodes farthest apart in scale (up to max_pairs), every other node is eliminated
             (global_equations) except the constants (nodes declared "fixed", or with "constant": True in their
             spec). What is left links the two ends of the network through all the relations in between.
+          - with max_triples > 0, the same for triples of nodes: the pairs farthest apart, each with every third node
+            linked to them (at most max_triples triples), the constants kept and, separately, eliminated too (an
+            equation where every constant cancels, such as S * Equant = Estock, has three nodes and no constant).
+        A residual below RESIDUAL_FLOOR (1e-9 dex) is rounding, not a difference: all such residuals count as equal.
         Among equal merits, the equation with fewer terms wins. The result says whether the invariant was derived
         ("derived": True, with the relations it combines) or given.
         """
@@ -1161,7 +1178,7 @@ class GlobalRelationalNetwork:
                     continue
                 residual = abs(sum_val - rhs)
                 span = max(node_logs) - min(node_logs) if node_logs else 0.0
-                merit = span / (1.0 + 1e7 * residual) if residual >= 0 else span
+                merit = _merit(span, residual)
 
             else:
                 lhs = 0.0
@@ -1182,7 +1199,8 @@ class GlobalRelationalNetwork:
 
                 residual = abs(lhs - rhs)
                 span = max(node_logs) - min(node_logs)
-                merit = span / (1.0 + 1e7 * residual)
+                sig = rel.get("sigma")
+                merit = _merit(span, residual, sig if isinstance(sig, (int, float)) else None)
 
             candidates.append(
                 {
@@ -1206,7 +1224,7 @@ class GlobalRelationalNetwork:
             }
 
         if unify and _np is not None:
-            candidates += self._unifying_candidates(resolved_vals, max_pairs)
+            candidates += self._unifying_candidates(resolved_vals, max_pairs, max_triples)
         if not candidates:
             return {
                 "title": "Global Equilibrium Invariant",
@@ -1238,35 +1256,75 @@ class GlobalRelationalNetwork:
 
         return self.discovered_relations["topological"][model_signature]
 
-    def _unifying_candidates(self, resolved_vals, max_pairs):
-        """Equations implied by the log relations between the pairs of nodes farthest apart in scale."""
+    def _unifying_candidates(self, resolved_vals, max_pairs, max_triples=0):
+        """Equations implied by the log relations between the pairs of nodes farthest apart in scale and, with
+        max_triples > 0, between triples of nodes (the farthest pairs, each with a third node linked to them)."""
         constants = [n for n in self.nodes_names
                      if n in self.fixed_nodes or self.nodes_specs.get(n, {}).get("constant")]
         positive = [n for n in self.nodes_names
                     if not self.lin[self.node_to_idx[n]] and n not in constants
                     and resolved_vals.get(n, 0) > 0 and not self.nodes_specs.get(n, {}).get("hidden_for")]
         logs = {n: math.log10(resolved_vals[n]) for n in positive}
-        pairs = sorted(((a, b) for i, a in enumerate(positive) for b in positive[i + 1:]),
-                       key=lambda ab: -abs(logs[ab[0]] - logs[ab[1]]))[:max_pairs]
+        ranked = sorted(((a, b) for i, a in enumerate(positive) for b in positive[i + 1:]),
+                        key=lambda ab: -abs(logs[ab[0]] - logs[ab[1]]))
         out, seen = [], set()
-        for a, b in pairs:
+
+        def take(eq, name, needed):
+            if not all(n in eq["terms"] for n in needed):
+                return
+            key = tuple(sorted(eq["terms"].items()))
+            if key in seen:
+                return
+            seen.add(key)
+            vals = [resolved_vals.get(n, 0.0) for n in eq["terms"]]
+            if any(v <= 0 for v in vals):
+                return
+            node_logs = [math.log10(v) for v in vals]
+            residual = abs(sum(c * l for c, l in zip(eq["terms"].values(), node_logs)) - eq["rhs"])
+            span = max(node_logs) - min(node_logs)
+            sigma = eq.get("sigma")
+            out.append({"name": name, "terms": eq["terms"], "rhs": eq["rhs"], "type": "log", "pow": {},
+                        "residual": residual, "span": span, "merit": _merit(span, residual, sigma),
+                        "derived": True, "relations": eq["relations"], "sigma": sigma})
+
+        for a, b in ranked[:max_pairs]:
             for eq in self.global_equations([a, b] + constants):
-                if a not in eq["terms"] or b not in eq["terms"]:
+                take(eq, f"unified_{a}_{b}", (a, b))
+        if max_triples > 0 and len(positive) >= 3:
+            # the triples: only nodes linked by a chain of log relations that does not pass through a constant
+            # (through a constant everything would be linked)
+            group = {n: n for n in positive}
+
+            def root(n):
+                while group[n] != n:
+                    group[n] = group[group[n]]
+                    n = group[n]
+                return n
+            for rel in self.relations:
+                if rel["type"] != "log":
                     continue
-                key = tuple(sorted(eq["terms"].items()))
-                if key in seen:
+                names = [self.nodes_names[i] for i, _ in rel["terms"] if self.nodes_names[i] in group]
+                for n in names[1:]:
+                    group[root(n)] = root(names[0])
+            per_pair = max(1, len(positive) - 2)
+            tried = set()
+            for a, b in ranked[:max(1, max_triples // per_pair)]:
+                if root(a) != root(b):
                     continue
-                seen.add(key)
-                vals = [resolved_vals[n] for n in eq["terms"]]
-                if any(v <= 0 for v in vals):
-                    continue
-                node_logs = [math.log10(v) for v in vals]
-                residual = abs(sum(c * l for c, l in zip(eq["terms"].values(), node_logs)) - eq["rhs"])
-                span = max(node_logs) - min(node_logs)
-                out.append({"name": f"unified_{a}_{b}", "terms": eq["terms"], "rhs": eq["rhs"], "type": "log",
-                            "pow": {}, "residual": residual, "span": span,
-                            "merit": span / (1.0 + 1e7 * residual), "derived": True,
-                            "relations": eq["relations"]})
+                for c in positive:
+                    if c in (a, b) or root(c) != root(a):
+                        continue
+                    trio = frozenset((a, b, c))
+                    if trio in tried:
+                        continue
+                    tried.add(trio)
+                    if len(tried) > max_triples:
+                        break
+                    for keep in ([a, b, c], [a, b, c] + constants):
+                        for eq in self.global_equations(keep):
+                            take(eq, f"unified_{a}_{b}_{c}", (a, b, c))
+                if len(tried) > max_triples:
+                    break
         return out
 
     def build_grm_table(
