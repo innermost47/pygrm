@@ -78,3 +78,32 @@ def test_rounding_is_not_a_difference():
     assert _merit(10.0, 3e-9, sigma=2e-9) == _merit(10.0, 0.0)       # exact relations, within 2 of their sigmas
     assert _merit(10.0, 3e-9, sigma=1e-3) < _merit(10.0, 0.0)        # not exact: the residual counts
     assert _merit(10.0, 1e-3) < _merit(9.0, 0.0)
+
+
+def with_a_multiple():
+    """The universe and a node that is a pure number times S (as vacRatio = 8/3 S in the grm-core network)."""
+    net, v = universe(True)
+    nodes = dict(net.nodes_specs)
+    nodes["vacRatio"] = {"guess": 1.0}
+    rels = list(net.relations_spec) + [{"name": "vac", "terms": {"vacRatio": 1, "S": -1}, "rhs": log(8 / 3),
+                                        "sigma": 1e-9}]
+    v = dict(v, vacRatio=8 / 3 * v["S"])
+    return GlobalRelationalNetwork(nodes, rels), v
+
+
+def test_a_pure_number_multiple_is_the_same_scale():
+    net, v = with_a_multiple()
+    classes = net.scale_classes()
+    assert sorted(classes["S"]) == ["S", "vacRatio"] and "Equant" not in classes and "c" not in classes
+    m = net.extract_master_invariant(v, display_mode="compact")
+    # without classes, vacRatio's 0.43 extra decade would win; as one scale, the simpler equation does
+    assert set(m["terms"]) == {"S", "Equant", "Estock"} and abs(m["rhs"]) < 1e-9
+
+
+def test_the_relations_an_equation_comes_from_are_the_chain():
+    net, v = universe(True)
+    (eq,) = net.global_equations(["S", "Equant", "Estock"])
+    assert eq["terms"] == {"S": 1.0, "Equant": 1.0, "Estock": -1.0}
+    # each of the seven once (planck and end are written squared here), and nothing else
+    assert eq["relations"] == {"planck": -1.0, "end": 1.0, "vacuum": -1.0, "stock": -1.0, "floor": 1.0,
+                               "quantum": 1.0, "entropy": 1.0}

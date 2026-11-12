@@ -955,6 +955,13 @@ class GlobalRelationalNetwork:
         for n in keep:
             if n not in self.node_to_idx:
                 raise KeyError(f"unknown node '{n}'")
+        A, b, sig, names = self._log_system()
+        if A is None:
+            return []
+        return self._equations_of(A, b, sig, names, keep, tol)
+
+    def _log_system(self):
+        """The log relations as a linear system in log10: A x = b, a sigma and a name per row (None if none)."""
         rows, rhs, sig, names = [], [], [], []
         values = None
         for rel in self.relations:
@@ -974,8 +981,11 @@ class GlobalRelationalNetwork:
             sig.append(float(sigma))
             names.append(rel["name"])
         if not rows:
-            return []
-        A, b, sig = _np.array(rows), _np.array(rhs), _np.array(sig)
+            return None, None, None, None
+        return _np.array(rows), _np.array(rhs), _np.array(sig), names
+
+    def _equations_of(self, A, b, sig, names, keep, tol=1e-9):
+        """global_equations on a system already built."""
         kept = [self.node_to_idx[n] for n in keep]
         elim = [i for i in range(A.shape[1]) if i not in kept and _np.any(A[:, i] != 0)]
         if elim:
@@ -1005,10 +1015,54 @@ class GlobalRelationalNetwork:
                 "rhs": right,
                 "sigma": float(_np.sqrt(_np.sum((y_s * sig) ** 2))),
                 "value": 10.0 ** right if abs(right) < 300 else None,   # None: beyond double precision
-                "relations": {names[i]: round(float(w), 9) for i, w in enumerate(y_s) if abs(w) > 1e-9},
+                # the relations it comes from: weights below 1e-4 of the largest are loops of the network added by
+                # the decomposition (they cancel), not part of the chain
+                "relations": {names[i]: round(float(w), 9) for i, w in enumerate(y_s)
+                              if abs(w) > max(1e-9, 1e-4 * float(_np.max(_np.abs(y_s))))},
                 "text": " · ".join(parts) + (f" = {10.0 ** right:.6g}" if abs(right) < 300 else f" = 10^{right:.6f}"),
             })
         return out
+
+    def scale_classes(self, tol=1e-7):
+        """The nodes that are the same scale: a pure-number multiple of each other, a = k * b with k a number the
+        network implies (no constant in it, no measurement: its relations alone). vacRatio = (8/3) S is one.
+        Returns {node: [the nodes of its class]} for the nodes in a class of two or more.
+
+        a / b is implied by the log relations when e_a - e_b lies in the row space of A (x = log10 of the nodes);
+        with P the projector on that row space, it is when the columns a and b of I - P are equal."""
+        if _np is None:
+            return {}
+        A, _, _, _ = self._log_system()
+        if A is None:
+            return {}
+        _, sv, vt = _np.linalg.svd(A, full_matrices=False)
+        rank = int(_np.sum(sv > 1e-9 * max(sv.max(), 1.0)))
+        V = vt[:rank]
+        Q = _np.eye(A.shape[1]) - V.T @ V
+        used = _np.any(A != 0, axis=0)
+        out = {}
+        for i in range(A.shape[1]):
+            if not used[i] or self.nodes_names[i] in out:
+                continue
+            d = _np.max(_np.abs(Q - Q[:, [i]]), axis=0)
+            same = [j for j in _np.nonzero(d < tol)[0] if used[j]]
+            if len(same) > 1:
+                group = [self.nodes_names[j] for j in same]
+                for n in group:
+                    out[n] = group
+        return out
+
+    def _scales(self, resolved_vals):
+        """The scale of each positive node, in decades: its log10, or, for a node in a class of pure-number
+        multiples, the mean log10 of its class (so that a node 8/3 of another does not stretch a span)."""
+        own = {n: math.log10(v) for n, v in resolved_vals.items()
+               if n in self.node_to_idx and isinstance(v, (int, float)) and v > 0}
+        scale = dict(own)
+        for n, group in self.scale_classes().items():
+            logs = [own[m] for m in group if m in own]
+            if n in own and logs:
+                scale[n] = sum(logs) / len(logs)
+        return scale
 
     def explain_hidden_nodes(self, result, tolerance_dex=0.02, max_power=3, decoys=(0.1372, -0.2113, 0.0731),
                              hops=3):
@@ -1144,6 +1198,7 @@ class GlobalRelationalNetwork:
         ("derived": True, with the relations it combines) or given.
         """
         candidates = []
+        scale = self._scales(resolved_vals) if unify and _np is not None else {}
 
         for rel in self.relations_spec:
             terms = rel.get("terms", {})
@@ -1191,7 +1246,7 @@ class GlobalRelationalNetwork:
                         valid = False
                         break
                     l_val = math.log10(v)
-                    node_logs.append(l_val)
+                    node_logs.append(scale.get(node_name, l_val))
                     lhs += float(coeff) * l_val
 
                 if not valid or len(node_logs) < 2:
@@ -1224,7 +1279,7 @@ class GlobalRelationalNetwork:
             }
 
         if unify and _np is not None:
-            candidates += self._unifying_candidates(resolved_vals, max_pairs, max_triples)
+            candidates += self._unifying_candidates(resolved_vals, max_pairs, max_triples, scale)
         if not candidates:
             return {
                 "title": "Global Equilibrium Invariant",
@@ -1232,7 +1287,10 @@ class GlobalRelationalNetwork:
                 "ratio_text": "1.00000000",
                 "solver_logs": ["No candidates found."],
             }
-        candidates.sort(key=lambda c: (-round(c["merit"], 9), len(c["terms"])))
+        # equal merits: fewer terms, then smaller powers, then a right side closer to 1 (the simpler equation)
+        candidates.sort(key=lambda c: (-round(c["merit"], 9), len(c["terms"]),
+                                       round(sum(abs(float(x)) for x in c["terms"].values()), 6),
+                                       abs(float(c["rhs"]))))
         best = candidates[0]
 
         dynamic_latex = self._format_with_latex(
@@ -1256,40 +1314,53 @@ class GlobalRelationalNetwork:
 
         return self.discovered_relations["topological"][model_signature]
 
-    def _unifying_candidates(self, resolved_vals, max_pairs, max_triples=0):
+    def _unifying_candidates(self, resolved_vals, max_pairs, max_triples=0, scale=None):
         """Equations implied by the log relations between the pairs of nodes farthest apart in scale and, with
-        max_triples > 0, between triples of nodes (the farthest pairs, each with a third node linked to them)."""
+        max_triples > 0, between triples of nodes (the farthest pairs, each with a third node linked to them).
+        scale: {node: decades} (_scales); nodes that are pure-number multiples of each other are one scale."""
         constants = [n for n in self.nodes_names
                      if n in self.fixed_nodes or self.nodes_specs.get(n, {}).get("constant")]
         positive = [n for n in self.nodes_names
                     if not self.lin[self.node_to_idx[n]] and n not in constants
                     and resolved_vals.get(n, 0) > 0 and not self.nodes_specs.get(n, {}).get("hidden_for")]
-        logs = {n: math.log10(resolved_vals[n]) for n in positive}
-        ranked = sorted(((a, b) for i, a in enumerate(positive) for b in positive[i + 1:]),
-                        key=lambda ab: -abs(logs[ab[0]] - logs[ab[1]]))
-        out, seen = [], set()
+        scale = dict(scale or {})
+        for n in positive:
+            scale.setdefault(n, math.log10(resolved_vals[n]))
+        A, b, sig, names = self._log_system()
+        if A is None:
+            return []
+        ranked = sorted(((a, c) for i, a in enumerate(positive) for c in positive[i + 1:]),
+                        key=lambda ab: -abs(scale[ab[0]] - scale[ab[1]]))
+        out, seen = [], {}
 
         def take(eq, name, needed):
             if not all(n in eq["terms"] for n in needed):
                 return
-            key = tuple(sorted(eq["terms"].items()))
-            if key in seen:
-                return
-            seen.add(key)
             vals = [resolved_vals.get(n, 0.0) for n in eq["terms"]]
             if any(v <= 0 for v in vals):
                 return
             node_logs = [math.log10(v) for v in vals]
             residual = abs(sum(c * l for c, l in zip(eq["terms"].values(), node_logs)) - eq["rhs"])
-            span = max(node_logs) - min(node_logs)
+            spans = [scale.get(n, l) for n, l in zip(eq["terms"], node_logs)]
+            span = max(spans) - min(spans)
             sigma = eq.get("sigma")
-            out.append({"name": name, "terms": eq["terms"], "rhs": eq["rhs"], "type": "log", "pow": {},
-                        "residual": residual, "span": span, "merit": _merit(span, residual, sigma),
-                        "derived": True, "relations": eq["relations"], "sigma": sigma})
+            cand = {"name": name, "terms": eq["terms"], "rhs": eq["rhs"], "type": "log", "pow": {},
+                    "residual": residual, "span": span, "merit": _merit(span, residual, sigma),
+                    "derived": True, "relations": eq["relations"], "sigma": sigma}
+            # the same equation from another combination of relations (a network in tension gives it with
+            # slightly different right sides): the one that holds best is kept
+            key = tuple(sorted(eq["terms"].items()))
+            if key in seen:
+                k = seen[key]
+                if residual < out[k]["residual"]:
+                    out[k] = cand
+                return
+            seen[key] = len(out)
+            out.append(cand)
 
-        for a, b in ranked[:max_pairs]:
-            for eq in self.global_equations([a, b] + constants):
-                take(eq, f"unified_{a}_{b}", (a, b))
+        for a, c in ranked[:max_pairs]:
+            for eq in self._equations_of(A, b, sig, names, [a, c] + constants):
+                take(eq, f"unified_{a}_{c}", (a, c))
         if max_triples > 0 and len(positive) >= 3:
             # the triples: only nodes linked by a chain of log relations that does not pass through a constant
             # (through a constant everything would be linked)
@@ -1303,28 +1374,34 @@ class GlobalRelationalNetwork:
             for rel in self.relations:
                 if rel["type"] != "log":
                     continue
-                names = [self.nodes_names[i] for i, _ in rel["terms"] if self.nodes_names[i] in group]
-                for n in names[1:]:
-                    group[root(n)] = root(names[0])
+                linked = [self.nodes_names[i] for i, _ in rel["terms"] if self.nodes_names[i] in group]
+                for n in linked[1:]:
+                    group[root(n)] = root(linked[0])
+            # the farthest pairs (all those as far as the last one kept), and the third nodes, the most extreme
+            # scales first; a third node is tried with every pair before the next one is
             per_pair = max(1, len(positive) - 2)
+            n_pairs = max(1, max_triples // per_pair)
+            if n_pairs < len(ranked):
+                last = abs(scale[ranked[n_pairs - 1][0]] - scale[ranked[n_pairs - 1][1]])
+                while n_pairs < len(ranked) and \
+                        abs(scale[ranked[n_pairs][0]] - scale[ranked[n_pairs][1]]) >= last - 1e-9:
+                    n_pairs += 1
+            pairs = [(a, c) for a, c in ranked[:n_pairs] if root(a) == root(c)]
+            thirds = sorted(positive, key=lambda n: -abs(scale[n]))
             tried = set()
-            for a, b in ranked[:max(1, max_triples // per_pair)]:
-                if root(a) != root(b):
-                    continue
-                for c in positive:
-                    if c in (a, b) or root(c) != root(a):
+            for third in thirds:
+                for a, c in pairs:
+                    if third in (a, c) or root(third) != root(a):
                         continue
-                    trio = frozenset((a, b, c))
+                    trio = frozenset((a, c, third))
                     if trio in tried:
                         continue
                     tried.add(trio)
-                    if len(tried) > max_triples:
-                        break
-                    for keep in ([a, b, c], [a, b, c] + constants):
-                        for eq in self.global_equations(keep):
-                            take(eq, f"unified_{a}_{b}_{c}", (a, b, c))
-                if len(tried) > max_triples:
-                    break
+                    for keep in ([a, c, third], [a, c, third] + constants):
+                        for eq in self._equations_of(A, b, sig, names, keep):
+                            take(eq, f"unified_{a}_{c}_{third}", (a, c, third))
+                    if len(tried) >= max_triples:
+                        return out
         return out
 
     def build_grm_table(

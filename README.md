@@ -156,20 +156,28 @@ D'où `S · Equant = Estock`.
 ## The master invariant (`extract_master_invariant`)
 
 Of the relations given, and of the equations the network implies without writing them, the one that ties the widest
-span of scales with the smallest residual (merit = span in decades / (1 + 1e7 residual)). The implied equations are
-found by elimination (`global_equations`): for the pairs of nodes farthest apart in scale (`max_pairs`, 60), and for
-triples (`max_triples`, 200: the farthest pairs, each with every third node linked to them by relations that do not
-pass through a constant), every other node is eliminated, the constants kept and, for triples, also eliminated. An
-equation where every constant cancels has three nodes or more: S · Equant = Estock, from the seven relations of the
-chain, is found that way (with pairs only, the best is S · Equant² = ħc⁵/(4πG), which needs a second equation to give
-it).
+span of scales with the smallest residual (merit = span in decades / (1 + 1e7 residual)).
 
-A residual below 1e-9 dex is rounding; an equation made of exact relations (sigma ≤ 1e-6 dex) whose residual is within
-two of its sigmas is exact. Such residuals count as equal, and the span decides, then the fewer terms.
+- **Implied equations** are found by elimination (`global_equations`). For the pairs of nodes farthest apart in scale
+  (`max_pairs`, 60) and for triples (`max_triples`, 200), every other node is eliminated: once with the constants
+  kept, and for triples also with the constants eliminated. A triple is one of the farthest pairs plus a third node
+  linked to it by relations that do not pass through a constant; the most extreme scales are tried first. An equation
+  in which every constant cancels has three nodes or more: S · Equant = Estock is found this way. With pairs only,
+  the best is S · Equant² = ħc⁵/(4πG), which needs a second equation to give it.
+- **One scale per class of multiples.** A node that is a pure number times another (vacRatio = 8/3 S: a ratio the
+  relations alone imply, with no constant and no measurement) is the same scale as it (`scale_classes()`). Spans are
+  measured on the class's mean scale, so a factor 8/3 does not stretch a span by 0.43 decade.
+- **Rounding is not a difference.** A residual below 1e-9 dex is rounding. An equation made of exact relations
+  (sigma ≤ 1e-6 dex) is exact when its residual is within two of its sigmas. All such residuals count as equal.
+  Between equal merits, the simpler equation wins: fewer terms first, then smaller powers, then a right side closer
+  to 1.
+- **Its relations.** The relations an equation comes from are given with their weights. Weights below 1e-4 of the
+  largest are loops of the network added by the decomposition and are left out.
 
 ```python
 m = net.extract_master_invariant(values, display_mode="compact")            # pairs and triples
-m = net.extract_master_invariant(values, max_triples=0)                     # pairs only (as before 0.5.0)
+m = net.extract_master_invariant(values, max_triples=0)                     # pairs only
+net.scale_classes()                                                         # {node: its class of multiples}
 ```
 
 ## Finding relations (`discover`)
